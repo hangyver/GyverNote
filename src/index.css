@@ -1,0 +1,120 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --color-gyver-bg: #ffffff;
+  --color-gyver-sidebar: #f7f7f9;
+  --color-gyver-border: #e6e6e6;
+  --color-gyver-text: #202124;
+  --color-gyver-muted: #5f6368;
+  --color-gyver-accent: #3b82f6;
+  --color-gyver-hover: #eef1f5;
+  --color-gyver-active: #e8f0fe;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--color-gyver-bg);
+  color: var(--color-gyver-text);
+  overflow: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Tiptap styles */
+.ProseMirror {
+  outline: none;
+  min-height: 100%;
+}
+
+.gyver-editor-content {
+  line-height: 1.55;
+}
+
+.gyver-editor-content > *:first-child {
+  margin-top: 0;
+}
+
+.gyver-editor-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.gyver-editor-content h1,
+.gyver-editor-content h2,
+.gyver-editor-content h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.25;
+}
+
+.gyver-editor-content p,
+.gyver-editor-content ul,
+.gyver-editor-content ol,
+.gyver-editor-content blockquote,
+.gyver-editor-content pre {
+  margin-top: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.gyver-editor-content li {
+  margin-top: 0.15rem;
+  margin-bottom: 0.15rem;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.ProseMirror h1, .ProseMirror h2, .ProseMirror h3 {
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.25;
+}
+
+.ProseMirror ul, .ProseMirror ol {
+  padding-left: 1.5rem;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid #e2e8f0;
+  padding-left: 1rem;
+  margin-left: 0;
+  color: #64748b;
+}
+
+/* Editor Container to fill height */
+.prose-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.prose-editor > div {
+  flex: 1;
+}
