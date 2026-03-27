@@ -13,13 +13,17 @@ import {
   X,
   ChevronDown,
   Book,
-  CheckSquare,
-  Filter,
   ChevronLeft,
+  Pilcrow,
+  Highlighter,
+  Pin,
+  Star,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { Mark, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import Underline from '@tiptap/extension-underline';
 
 interface Note {
   id: string;
@@ -29,6 +33,8 @@ interface Note {
   date: string;
   preview: string;
   content: string;
+  isPinned: boolean;
+  isQuickAccess: boolean;
 }
 
 interface Notebook {
@@ -82,6 +88,61 @@ function renderCoverPreview(cover: string, alt: string, className: string) {
   return <div className={className} style={{ background: cover }} aria-label={alt} />;
 }
 
+const TextColor = Mark.create({
+  name: 'textColor',
+  parseHTML() {
+    return [{ tag: 'span[data-text-color]' }];
+  },
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-text-color') || element.style.color || null,
+        renderHTML: (attributes) => {
+          if (!attributes.color) {
+            return {};
+          }
+          return {
+            'data-text-color': attributes.color,
+            style: `color: ${attributes.color}`,
+          };
+        },
+      },
+    };
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const TextHighlight = Mark.create({
+  name: 'textHighlight',
+  parseHTML() {
+    return [{ tag: 'span[data-highlight-color]' }];
+  },
+  addAttributes() {
+    return {
+      backgroundColor: {
+        default: null,
+        parseHTML: (element) =>
+          element.getAttribute('data-highlight-color') || element.style.backgroundColor || null,
+        renderHTML: (attributes) => {
+          if (!attributes.backgroundColor) {
+            return {};
+          }
+          return {
+            'data-highlight-color': attributes.backgroundColor,
+            style: `background-color: ${attributes.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
 const initialSpaces: SpaceData[] = [
   {
     id: 'general',
@@ -108,6 +169,8 @@ const initialSpaces: SpaceData[] = [
         author: '박찬 기자',
         date: 'Mar 25, 10:01 AM',
         preview: '엔비디아가 초대형 모델 추론 비용을 낮추는 전략을 공개했다.',
+        isPinned: false,
+        isQuickAccess: false,
         content: `
           <h2>엔비디아, 30B로 1T 일부 추론 성능 공개</h2>
           <ul>
@@ -126,6 +189,8 @@ const initialSpaces: SpaceData[] = [
         author: '이보람 기자',
         date: 'Mar 12, 2:40 PM',
         preview: '검색 정확도와 응답 속도를 동시에 높이기 위한 인덱스 개선안이 공개됐다.',
+        isPinned: false,
+        isQuickAccess: false,
         content: `
           <h2>메타, 멀티모달 검색에 맞춘 차세대 인덱싱 구조 발표</h2>
           <ul>
@@ -153,6 +218,7 @@ const notebookCoverOptions = [
 
 const emptyNotes: Note[] = [];
 const emptyNotebooks: Notebook[] = [];
+const sortNotesByPinned = (notes: Note[]) => [...notes].sort((left, right) => Number(right.isPinned) - Number(left.isPinned));
 
 export default function App() {
   const ALL_NOTES_ID = '__all_notes__';
@@ -176,18 +242,29 @@ export default function App() {
   const [isNotebookOptionsOpen, setIsNotebookOptionsOpen] = useState<boolean>(false);
   const [isDeleteNotebookDialogOpen, setIsDeleteNotebookDialogOpen] = useState<boolean>(false);
   const [expandedNotebookIds, setExpandedNotebookIds] = useState<string[]>([]);
+  const [isHeadingMenuOpen, setIsHeadingMenuOpen] = useState<boolean>(false);
+  const [isTextColorMenuOpen, setIsTextColorMenuOpen] = useState<boolean>(false);
+  const [isHighlightMenuOpen, setIsHighlightMenuOpen] = useState<boolean>(false);
+  const [noteContextMenu, setNoteContextMenu] = useState<{ noteId: string; x: number; y: number } | null>(null);
+  const [pendingDeleteNoteId, setPendingDeleteNoteId] = useState<string | null>(null);
 
   const spaceMenuRef = React.useRef<HTMLDivElement | null>(null);
   const notebookOptionsRef = React.useRef<HTMLDivElement | null>(null);
   const notebookFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const headingMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const textColorMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const highlightMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const noteContextMenuRef = React.useRef<HTMLDivElement | null>(null);
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) ?? spaces[0];
   const allNotes = activeSpace?.notes ?? emptyNotes;
   const allNotebooks = activeSpace?.notebooks ?? emptyNotebooks;
   const selectedNotebook = allNotebooks.find((notebook) => notebook.id === selectedNotebookId) ?? null;
+  const pendingDeleteNote = allNotes.find((note) => note.id === pendingDeleteNoteId) ?? null;
   const isNotebookDialogOpen = notebookDialogMode !== null;
   const rootNotebooks = allNotebooks.filter((notebook) => !notebook.parentId);
   const childNotebooks = selectedNotebook ? allNotebooks.filter((notebook) => notebook.parentId === selectedNotebook.id) : [];
-  const notebookScopedNotes =
+  const quickAccessNotes = sortNotesByPinned(allNotes.filter((note) => note.isQuickAccess));
+  const rawNotebookScopedNotes =
     selectedNotebookId === ALL_NOTES_ID
       ? allNotes
       : selectedNotebookId === UNCATEGORIZED_ID
@@ -195,6 +272,7 @@ export default function App() {
         : selectedNotebook
           ? allNotes.filter((note) => note.notebook === selectedNotebook.name)
           : allNotes;
+  const notebookScopedNotes = sortNotesByPinned(rawNotebookScopedNotes);
   const filteredNotes = searchQuery.trim()
     ? notebookScopedNotes.filter((note) => getSearchableText(note).includes(searchQuery.trim().toLowerCase()))
     : notebookScopedNotes;
@@ -221,7 +299,7 @@ export default function App() {
   };
 
   const editor = useEditor({
-    extensions: [StarterKit, Placeholder.configure({ placeholder: '내용을 입력하세요...' })],
+    extensions: [StarterKit, Underline, TextColor, TextHighlight, Placeholder.configure({ placeholder: '내용을 입력하세요...' })],
     content: activeNote?.content ?? '',
     onUpdate: ({ editor }) => {
       if (!activeNote || !activeSpace) {
@@ -256,6 +334,77 @@ export default function App() {
       },
     },
   });
+
+  const isEditorToolbarDisabled = !editor || !activeNote;
+  const activeHeadingLevel = [1, 2, 3, 4, 5].find((level) => editor?.isActive('heading', { level })) ?? null;
+  const activeTextColor = (editor?.getAttributes('textColor').color as string | undefined) ?? null;
+  const activeHighlightColor =
+    (editor?.getAttributes('textHighlight').backgroundColor as string | undefined) ?? null;
+  const headingOptions = [
+    { label: 'H1', level: 1 },
+    { label: 'H2', level: 2 },
+    { label: 'H3', level: 3 },
+    { label: 'H4', level: 4 },
+    { label: 'H5', level: 5 },
+    { label: 'Normal', level: null },
+  ];
+  const textColorOptions = [
+    { label: 'Red', value: '#ef4444' },
+    { label: 'Orange', value: '#f97316' },
+    { label: 'Yellow', value: '#f59e0b' },
+    { label: 'Green', value: '#22c55e' },
+    { label: 'Blue', value: '#3b82f6' },
+    { label: 'Pink', value: '#ec4899' },
+    { label: 'Purple', value: '#8b5cf6' },
+    { label: 'Gray', value: '#6b7280' },
+  ];
+  const highlightColorOptions = [
+    { label: 'Red', value: '#fca5a5' },
+    { label: 'Orange', value: '#fdba74' },
+    { label: 'Yellow', value: '#fde68a' },
+    { label: 'Green', value: '#86efac' },
+    { label: 'Blue', value: '#93c5fd' },
+    { label: 'Pink', value: '#f9a8d4' },
+    { label: 'Purple', value: '#d8b4fe' },
+    { label: 'Gray', value: '#d1d5db' },
+  ];
+  const editorToolbarButtons = [
+    {
+      key: 'bold',
+      label: 'Bold',
+      isActive: editor?.isActive('bold') ?? false,
+      onClick: () => editor?.chain().focus().toggleBold().run(),
+      content: <span className="text-[17px] font-semibold">B</span>,
+    },
+    {
+      key: 'italic',
+      label: 'Italic',
+      isActive: editor?.isActive('italic') ?? false,
+      onClick: () => editor?.chain().focus().toggleItalic().run(),
+      content: <span className="text-[17px] italic">I</span>,
+    },
+    {
+      key: 'underline',
+      label: 'Underline',
+      isActive: editor?.isActive('underline') ?? false,
+      onClick: () => editor?.chain().focus().toggleUnderline().run(),
+      content: <span className="border-b border-current pb-0.5 text-[17px] font-medium">U</span>,
+    },
+    {
+      key: 'strike',
+      label: 'Strike',
+      isActive: editor?.isActive('strike') ?? false,
+      onClick: () => editor?.chain().focus().toggleStrike().run(),
+      content: <span className="text-[17px] line-through">S</span>,
+    },
+    {
+      key: 'clear',
+      label: 'Clear Format',
+      isActive: false,
+      onClick: () => editor?.chain().focus().clearNodes().unsetAllMarks().run(),
+      content: <Pilcrow size={16} strokeWidth={2} />,
+    },
+  ];
 
   React.useEffect(() => {
     if (!editor) {
@@ -307,6 +456,67 @@ export default function App() {
   }, [isNotebookOptionsOpen]);
 
   React.useEffect(() => {
+    if (!isHeadingMenuOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!headingMenuRef.current?.contains(event.target as Node)) {
+        setIsHeadingMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isHeadingMenuOpen]);
+
+  React.useEffect(() => {
+    if (!isTextColorMenuOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!textColorMenuRef.current?.contains(event.target as Node)) {
+        setIsTextColorMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isTextColorMenuOpen]);
+
+  React.useEffect(() => {
+    if (!isHighlightMenuOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!highlightMenuRef.current?.contains(event.target as Node)) {
+        setIsHighlightMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isHighlightMenuOpen]);
+
+  React.useEffect(() => {
+    if (!noteContextMenu) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!noteContextMenuRef.current?.contains(event.target as Node)) {
+        setNoteContextMenu(null);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNoteContextMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [noteContextMenu]);
+
+  React.useEffect(() => {
     if (!canReorderNotes && isReorderMode) {
       setIsReorderMode(false);
       setDraggedNoteId(null);
@@ -316,6 +526,14 @@ export default function App() {
   React.useEffect(() => {
     setIsNotebookOptionsOpen(false);
   }, [selectedNotebookId]);
+
+  React.useEffect(() => {
+    setIsHeadingMenuOpen(false);
+    setIsTextColorMenuOpen(false);
+    setIsHighlightMenuOpen(false);
+    setNoteContextMenu(null);
+    setPendingDeleteNoteId(null);
+  }, [selectedNotebookId, activeNoteId]);
 
   React.useEffect(() => {
     setExpandedNotebookIds((current) => current.filter((id) => allNotebooks.some((notebook) => notebook.id === id)));
@@ -482,6 +700,8 @@ export default function App() {
         minute: 'numeric',
       }),
       preview: '',
+      isPinned: false,
+      isQuickAccess: false,
       content: '',
     };
 
@@ -574,6 +794,8 @@ export default function App() {
       author: '',
       date: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' }),
       preview: '',
+      isPinned: false,
+      isQuickAccess: false,
       content: '',
     };
     setSpaces((current) =>
@@ -605,6 +827,109 @@ export default function App() {
     }
     setActiveNoteId(newNote.id);
     setSearchQuery('');
+  };
+
+  const handleTogglePinForNote = (noteId: string) => {
+    if (!activeSpace) {
+      return;
+    }
+
+    setSpaces((current) =>
+      current.map((space) => {
+        if (space.id !== activeSpace.id) {
+          return space;
+        }
+
+        const targetNote = space.notes.find((note) => note.id === noteId);
+        if (!targetNote) {
+          return space;
+        }
+
+        if (!targetNote.isPinned) {
+          const pinnedNote = { ...targetNote, isPinned: true };
+          return {
+            ...space,
+            notes: [pinnedNote, ...space.notes.filter((note) => note.id !== noteId)],
+          };
+        }
+
+        return {
+          ...space,
+          notes: space.notes.map((note) => (note.id === noteId ? { ...note, isPinned: false } : note)),
+        };
+      }),
+    );
+  };
+
+  const handleTogglePin = () => {
+    if (!activeNote) {
+      return;
+    }
+    handleTogglePinForNote(activeNote.id);
+  };
+
+  const handleToggleQuickAccessForNote = (noteId: string) => {
+    if (!activeSpace) {
+      return;
+    }
+
+    setSpaces((current) =>
+      current.map((space) =>
+        space.id === activeSpace.id
+          ? {
+              ...space,
+              notes: space.notes.map((note) => (note.id === noteId ? { ...note, isQuickAccess: !note.isQuickAccess } : note)),
+            }
+          : space,
+      ),
+    );
+  };
+
+  const handleToggleQuickAccess = () => {
+    if (!activeNote) {
+      return;
+    }
+    handleToggleQuickAccessForNote(activeNote.id);
+  };
+
+  const handleDeleteNote = (noteId: string) => {
+    if (!activeSpace) {
+      return;
+    }
+
+    const nextVisibleNoteId =
+      filteredNotes.find((note) => note.id !== noteId)?.id ??
+      notebookScopedNotes.find((note) => note.id !== noteId)?.id ??
+      '';
+
+    setSpaces((current) =>
+      current.map((space) =>
+        space.id === activeSpace.id
+          ? {
+              ...space,
+              notes: space.notes.filter((note) => note.id !== noteId),
+            }
+          : space,
+      ),
+    );
+
+    if (activeNoteId === noteId) {
+      setActiveNoteId(nextVisibleNoteId);
+    }
+    setPendingDeleteNoteId(null);
+    setNoteContextMenu(null);
+  };
+
+  const requestDeleteNote = (noteId: string) => {
+    setPendingDeleteNoteId(noteId);
+    setNoteContextMenu(null);
+  };
+
+  const openQuickAccessNote = (noteId: string) => {
+    setSelectedNotebookId(ALL_NOTES_ID);
+    setSearchQuery('');
+    setIsReorderMode(false);
+    setActiveNoteId(noteId);
   };
 
   const moveNote = (sourceId: string, targetId: string) => {
@@ -665,21 +990,36 @@ export default function App() {
             ) : (
               <span className="block h-4 w-4 shrink-0" />
             )}
-            <button
-              onClick={() => {
-                setSelectedNotebookId(notebook.id);
-                if (nestedChildren.length > 0 && !isExpanded) {
-                  setExpandedNotebookIds((current) => [...current, notebook.id]);
-                }
-              }}
-              className={`flex min-w-0 flex-1 items-center justify-between rounded-md px-3 py-1.5 text-sm ${selectedNotebookId === notebook.id ? 'bg-gray-200' : 'hover:bg-gray-200'}`}
-            >
-              <div className="flex min-w-0 items-center gap-2.5">
-                {renderCoverPreview(notebook.cover, notebook.name, 'h-5 w-5 rounded-md')}
-                <span className="truncate">{notebook.name}</span>
-              </div>
-              <span className="text-[11px] text-gray-400">{notebookCounts[notebook.name] ?? 0}</span>
-            </button>
+            <div className={`group flex min-w-0 flex-1 items-center rounded-md ${selectedNotebookId === notebook.id ? 'bg-gray-200' : 'hover:bg-gray-200'}`}>
+              <button
+                onClick={() => {
+                  setSelectedNotebookId(notebook.id);
+                  if (nestedChildren.length > 0 && !isExpanded) {
+                    setExpandedNotebookIds((current) => [...current, notebook.id]);
+                  }
+                }}
+                className="flex min-w-0 flex-1 items-center justify-between px-3 py-1.5 text-sm"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  {renderCoverPreview(notebook.cover, notebook.name, 'h-5 w-5 rounded-md')}
+                  <span className="truncate">{notebook.name}</span>
+                </div>
+                <span className="text-[11px] text-gray-400">{notebookCounts[notebook.name] ?? 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedNotebookId(notebook.id);
+                  setIsNotebookOptionsOpen(true);
+                }}
+                className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-gray-700 group-hover:opacity-100"
+                aria-label="Notebook menu"
+                title="Notebook menu"
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            </div>
           </div>
           {nestedChildren.length > 0 && isExpanded && <div className="mt-0.5 space-y-0.5">{renderNotebookTree(notebook.id, depth + 1)}</div>}
         </div>
@@ -739,13 +1079,20 @@ export default function App() {
 
             <div className="space-y-0.5 px-2 pb-2">
               <button onClick={() => setSelectedNotebookId(ALL_NOTES_ID)} className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-sm ${selectedNotebookId === ALL_NOTES_ID ? 'bg-gray-200' : 'hover:bg-gray-200'}`}><div className="flex items-center gap-2.5"><Book size={16} className="text-gray-400" /><span>All Notes</span></div><span className="text-xs text-gray-400">{allNotes.length}</span></button>
-              <div className="flex items-center justify-between rounded-md px-3 py-1.5 text-sm hover:bg-gray-200"><div className="flex items-center gap-2.5"><CheckSquare size={16} className="text-pink-400" /><span>Todo</span></div><span className="text-xs text-gray-400">0</span></div>
-              <button onClick={() => setSelectedNotebookId(UNCATEGORIZED_ID)} className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-sm ${selectedNotebookId === UNCATEGORIZED_ID ? 'bg-gray-200' : 'hover:bg-gray-200'}`}><div className="flex items-center gap-2.5"><Filter size={16} className="text-emerald-500" /><span>Uncategorized</span></div><span className="text-xs text-gray-400">{notebookCounts.Uncategorized ?? 0}</span></button>
             </div>
 
             <div className="mt-2 flex items-center gap-2 px-4 py-2 text-xs font-semibold tracking-wider text-gray-500"><ChevronDown size={14} className="text-gray-400" />Quick Access</div>
             <div className="px-2 pb-2">
-              {allNotes[0] ? <div className="rounded-md px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200">{allNotes[0].title}</div> : <div className="px-3 py-2 text-xs text-gray-400">비어 있는 스페이스입니다.</div>}
+              {quickAccessNotes.length > 0 ? quickAccessNotes.map((note) => (
+                <button
+                  key={note.id}
+                  onClick={() => openQuickAccessNote(note.id)}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-200"
+                >
+                  <Star size={14} className="shrink-0 text-amber-400" fill="currentColor" />
+                  <span className="truncate">{note.title}</span>
+                </button>
+              )) : <div className="px-3 py-2 text-xs text-gray-400">즐겨찾기한 메모가 없습니다.</div>}
             </div>
 
             <div className="mt-2 flex items-center justify-between px-4 py-2 text-xs font-semibold tracking-wider text-gray-500"><div className="flex items-center gap-2"><ChevronDown size={14} className="text-gray-400" />Notebooks</div><button onClick={openNotebookDialog} className="rounded-md p-1 text-gray-400 hover:bg-gray-200 hover:text-blue-500"><Plus size={14} /></button></div>
@@ -869,6 +1216,14 @@ export default function App() {
                     setActiveNoteId(note.id);
                   }
                 }}
+                onContextMenu={(event) => {
+                  if (isReorderMode) {
+                    return;
+                  }
+                  event.preventDefault();
+                  setActiveNoteId(note.id);
+                  setNoteContextMenu({ noteId: note.id, x: event.clientX, y: event.clientY });
+                }}
                 className={`${isReorderMode ? 'cursor-grab' : 'cursor-pointer'} border-b p-4 ${draggedNoteId === note.id ? 'opacity-50' : ''} ${activeNoteId === note.id ? 'border-l-4 border-l-blue-500 bg-[#eff4ff]' : 'border-l-4 border-transparent bg-white hover:bg-gray-50'}`}
               >
                 <div className="flex items-start gap-3">
@@ -886,12 +1241,284 @@ export default function App() {
               </div>
             )) : <div className="px-6 py-10 text-center text-sm text-gray-500">{searchQuery.trim() ? '검색 결과가 없습니다.' : '이 스페이스는 비어 있습니다.'}</div>}
           </div>
+          {noteContextMenu && (() => {
+            const menuWidth = 220;
+            const menuHeight = 154;
+            const left = typeof window === 'undefined' ? noteContextMenu.x : Math.min(noteContextMenu.x, window.innerWidth - menuWidth - 12);
+            const top = typeof window === 'undefined' ? noteContextMenu.y : Math.min(noteContextMenu.y, window.innerHeight - menuHeight - 12);
+
+            return (
+              <div
+                ref={noteContextMenuRef}
+                className="fixed z-50 w-[220px] overflow-hidden rounded-[20px] bg-[#1f1f21] py-2 text-sm text-white shadow-[0_20px_50px_rgba(15,23,42,0.35)]"
+                style={{ left, top }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleTogglePinForNote(noteContextMenu.noteId);
+                    setNoteContextMenu(null);
+                  }}
+                  className="flex w-full items-center px-4 py-3 text-left transition-colors hover:bg-white/10"
+                >
+                  <span>Pin to top</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleToggleQuickAccessForNote(noteContextMenu.noteId);
+                    setNoteContextMenu(null);
+                  }}
+                  className="flex w-full items-center px-4 py-3 text-left transition-colors hover:bg-white/10"
+                >
+                  <span>Add to Quick Access</span>
+                </button>
+                <div className="my-1 border-t border-white/10" />
+                <button
+                  type="button"
+                  onClick={() => requestDeleteNote(noteContextMenu.noteId)}
+                  className="flex w-full items-center px-4 py-3 text-left text-white transition-colors hover:bg-white/10"
+                >
+                  <span>Delete</span>
+                </button>
+              </div>
+            );
+          })()}
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col bg-white">
-          <div className="border-b border-[#f3f4f6] px-8 py-3 text-xs text-gray-400">{activeNote?.notebook ?? activeSpace?.name ?? 'Space'}</div>
-          <div className="flex-1 overflow-y-auto px-8 py-6">
-            {activeNote ? <div className="prose-editor max-w-[900px]"><EditorContent editor={editor} /></div> : <div className="flex h-full items-center justify-center"><div className="max-w-[420px] rounded-[28px] border border-dashed border-gray-200 bg-[#fafafa] px-8 py-10 text-center"><p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-500">Empty Space</p><h2 className="mt-3 text-2xl font-semibold text-gray-900">새 스페이스가 준비되었습니다</h2><p className="mt-3 text-sm leading-6 text-gray-500">기존 내용은 그대로 남아 있고, 여기서 만드는 새 노트와 노트북은 이 스페이스 안에서만 관리됩니다.</p></div></div>}
+          <div className="flex items-center justify-start gap-1 border-b border-[#f3f4f6] px-8 py-2.5">
+            <button
+              type="button"
+              disabled={!activeNote}
+              onClick={handleTogglePin}
+              className={`rounded-md p-2 transition-colors ${
+                activeNote?.isPinned
+                  ? 'text-[#2563eb] hover:bg-[#eff4ff]'
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+              } ${!activeNote ? 'cursor-not-allowed opacity-40' : ''}`}
+              aria-label="Pin note"
+              title="Pin note"
+            >
+              <Pin size={16} strokeWidth={1.8} fill={activeNote?.isPinned ? 'currentColor' : 'none'} />
+            </button>
+            <button
+              type="button"
+              disabled={!activeNote}
+              onClick={handleToggleQuickAccess}
+              className={`rounded-md p-2 transition-colors ${
+                activeNote?.isQuickAccess
+                  ? 'text-amber-500 hover:bg-amber-50'
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+              } ${!activeNote ? 'cursor-not-allowed opacity-40' : ''}`}
+              aria-label="Add to quick access"
+              title="Add to quick access"
+            >
+              <Star size={16} strokeWidth={1.8} fill={activeNote?.isQuickAccess ? 'currentColor' : 'none'} />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+            {activeNote ? <div className="prose-editor w-full max-w-[900px]"><EditorContent editor={editor} /></div> : <div className="flex h-full items-center justify-center"><div className="max-w-[420px] rounded-[28px] border border-dashed border-gray-200 bg-[#fafafa] px-8 py-10 text-center"><p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-500">Empty Space</p><h2 className="mt-3 text-2xl font-semibold text-gray-900">새 스페이스가 준비되었습니다</h2><p className="mt-3 text-sm leading-6 text-gray-500">기존 내용은 그대로 남아 있고, 여기서 만드는 새 노트와 노트북은 이 스페이스 안에서만 관리됩니다.</p></div></div>}
+          </div>
+          <div className="border-t border-[#eef2f7] bg-white/95 px-8 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+            <div className="flex w-full max-w-[900px] items-center gap-1.5">
+              <div className="relative" ref={headingMenuRef}>
+                <button
+                  type="button"
+                  title="Heading"
+                  aria-label="Heading"
+                  disabled={isEditorToolbarDisabled}
+                  onClick={() => {
+                    if (isEditorToolbarDisabled) {
+                      return;
+                    }
+                    setIsTextColorMenuOpen(false);
+                    setIsHighlightMenuOpen(false);
+                    setIsHeadingMenuOpen((current) => !current);
+                  }}
+                  className={`flex h-10 min-w-10 items-center justify-center rounded-xl border text-sm transition-all ${
+                    activeHeadingLevel || isHeadingMenuOpen
+                      ? 'border-[#dbe7ff] bg-[#eaf2ff] text-[#2563eb] shadow-[0_8px_20px_rgba(37,99,235,0.12)]'
+                      : 'border-transparent bg-transparent text-[#6b7280] hover:bg-[#f3f6fb] hover:text-[#1f2937]'
+                  } ${isEditorToolbarDisabled ? 'cursor-not-allowed opacity-40' : ''}`}
+                >
+                  <span className="text-[17px] font-semibold">H</span>
+                </button>
+                {isHeadingMenuOpen && !isEditorToolbarDisabled && (
+                  <div className="absolute bottom-[calc(100%+12px)] left-0 z-40 w-[120px] rounded-[18px] bg-[#1f1f21] px-2 py-3 text-white shadow-[0_20px_50px_rgba(15,23,42,0.35)]">
+                    {headingOptions.map((option) => {
+                      const isActive = option.level === null ? editor?.isActive('paragraph') ?? false : activeHeadingLevel === option.level;
+                      return (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => {
+                            if (option.level === null) {
+                              editor?.chain().focus().setParagraph().run();
+                            } else {
+                              editor?.chain().focus().setHeading({ level: option.level as 1 | 2 | 3 | 4 | 5 }).run();
+                            }
+                            setIsHeadingMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                            isActive ? 'text-[#8ab4ff]' : 'text-white hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="flex w-4 justify-center text-white/85">{isActive ? <Check size={14} /> : null}</span>
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="relative" ref={textColorMenuRef}>
+                <button
+                  type="button"
+                  title="Text Color"
+                  aria-label="Text Color"
+                  disabled={isEditorToolbarDisabled}
+                  onClick={() => {
+                    if (isEditorToolbarDisabled) {
+                      return;
+                    }
+                    setIsHeadingMenuOpen(false);
+                    setIsHighlightMenuOpen(false);
+                    setIsTextColorMenuOpen((current) => !current);
+                  }}
+                  className={`flex h-10 min-w-10 items-center justify-center rounded-xl border text-sm transition-all ${
+                    activeTextColor || isTextColorMenuOpen
+                      ? 'border-[#dbe7ff] bg-[#eaf2ff] text-[#2563eb] shadow-[0_8px_20px_rgba(37,99,235,0.12)]'
+                      : 'border-transparent bg-transparent text-[#6b7280] hover:bg-[#f3f6fb] hover:text-[#1f2937]'
+                  } ${isEditorToolbarDisabled ? 'cursor-not-allowed opacity-40' : ''}`}
+                >
+                  <span className="relative text-[17px] font-medium">
+                    A
+                    <span
+                      className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full"
+                      style={{ backgroundColor: activeTextColor ?? '#9ca3af' }}
+                    />
+                  </span>
+                </button>
+                {isTextColorMenuOpen && !isEditorToolbarDisabled && (
+                  <div className="absolute bottom-[calc(100%+12px)] left-0 z-40 w-[220px] overflow-hidden rounded-[20px] bg-[#1f1f21] py-2 text-white shadow-[0_20px_50px_rgba(15,23,42,0.35)]">
+                    <div className="px-2">
+                      {textColorOptions.map((option) => {
+                        const isActive = activeTextColor === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              editor?.chain().focus().setMark('textColor', { color: option.value }).run();
+                              setIsTextColorMenuOpen(false);
+                            }}
+                            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                              isActive ? 'bg-white/10 text-white' : 'text-white hover:bg-white/10'
+                            }`}
+                          >
+                            <span className="h-4 w-4 rounded-full border border-white/60" style={{ backgroundColor: option.value }} />
+                            <span>{option.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 border-t border-white/10 px-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          editor?.chain().focus().unsetMark('textColor').run();
+                          setIsTextColorMenuOpen(false);
+                        }}
+                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                      >
+                        Remove Text Color
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="relative" ref={highlightMenuRef}>
+                <button
+                  type="button"
+                  title="Highlight"
+                  aria-label="Highlight"
+                  disabled={isEditorToolbarDisabled}
+                  onClick={() => {
+                    if (isEditorToolbarDisabled) {
+                      return;
+                    }
+                    setIsHeadingMenuOpen(false);
+                    setIsTextColorMenuOpen(false);
+                    setIsHighlightMenuOpen((current) => !current);
+                  }}
+                  className={`flex h-10 min-w-10 items-center justify-center rounded-xl border text-sm transition-all ${
+                    activeHighlightColor || isHighlightMenuOpen
+                      ? 'border-[#dbe7ff] bg-[#eaf2ff] text-[#2563eb] shadow-[0_8px_20px_rgba(37,99,235,0.12)]'
+                      : 'border-transparent bg-transparent text-[#6b7280] hover:bg-[#f3f6fb] hover:text-[#1f2937]'
+                  } ${isEditorToolbarDisabled ? 'cursor-not-allowed opacity-40' : ''}`}
+                >
+                  <span className="relative flex items-center justify-center">
+                    <Highlighter size={16} strokeWidth={2} />
+                    <span
+                      className="absolute -bottom-1 left-1/2 h-[2px] w-4 -translate-x-1/2 rounded-full"
+                      style={{ backgroundColor: activeHighlightColor ?? '#9ca3af' }}
+                    />
+                  </span>
+                </button>
+                {isHighlightMenuOpen && !isEditorToolbarDisabled && (
+                  <div className="absolute bottom-[calc(100%+12px)] left-0 z-40 w-[220px] overflow-hidden rounded-[20px] bg-[#1f1f21] py-2 text-white shadow-[0_20px_50px_rgba(15,23,42,0.35)]">
+                    <div className="px-2">
+                      {highlightColorOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            editor?.chain().focus().setMark('textHighlight', { backgroundColor: option.value }).run();
+                            setIsHighlightMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
+                            activeHighlightColor === option.value ? 'bg-white/10 text-white' : 'text-white hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="h-4 w-4 rounded-full border border-white/60" style={{ backgroundColor: option.value }} />
+                          <span>{option.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 border-t border-white/10 px-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          editor?.chain().focus().unsetMark('textHighlight').run();
+                          setIsHighlightMenuOpen(false);
+                        }}
+                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                      >
+                        No background
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {editorToolbarButtons.map((button) => (
+                <button
+                  key={button.key}
+                  type="button"
+                  title={button.label}
+                  aria-label={button.label}
+                  disabled={isEditorToolbarDisabled}
+                  onClick={button.onClick}
+                  className={`flex h-10 min-w-10 items-center justify-center rounded-xl border text-sm transition-all ${
+                    button.isActive
+                      ? 'border-[#dbe7ff] bg-[#eaf2ff] text-[#2563eb] shadow-[0_8px_20px_rgba(37,99,235,0.12)]'
+                      : 'border-transparent bg-transparent text-[#6b7280] hover:bg-[#f3f6fb] hover:text-[#1f2937]'
+                  } ${isEditorToolbarDisabled ? 'cursor-not-allowed opacity-40' : ''}`}
+                >
+                  {button.content}
+                </button>
+              ))}
+            </div>
           </div>
         </main>
       </div>
@@ -971,7 +1598,7 @@ export default function App() {
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">Delete</p>
                 <h2 className="mt-2 text-xl font-semibold text-gray-900">Delete Notebook?</h2>
-                <p className="mt-2 text-sm leading-6 text-gray-500">"{selectedNotebook.name}" 노트북을 삭제하시겠습니까? 포함된 노트는 `Uncategorized`로 이동됩니다.</p>
+                <p className="mt-2 text-sm leading-6 text-gray-500">"{selectedNotebook.name}" 노트북을 삭제하시겠습니까?</p>
               </div>
               <button onClick={() => setIsDeleteNotebookDialogOpen(false)} className="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
                 <X size={16} />
@@ -980,6 +1607,27 @@ export default function App() {
             <div className="mt-6 flex justify-end gap-2">
               <button onClick={() => setIsDeleteNotebookDialogOpen(false)} className="rounded-2xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
               <button onClick={handleDeleteNotebook} className="rounded-2xl bg-red-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-600">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingDeleteNote && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#111111]/30 backdrop-blur-[1px]">
+          <div className="w-[360px] rounded-3xl border border-white/60 bg-white p-6 shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">Delete</p>
+                <h2 className="mt-2 text-xl font-semibold text-gray-900">Delete Note?</h2>
+                <p className="mt-2 text-sm leading-6 text-gray-500">"{pendingDeleteNote.title}" 메모를 삭제하시겠습니까?</p>
+              </div>
+              <button onClick={() => setPendingDeleteNoteId(null)} className="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setPendingDeleteNoteId(null)} className="rounded-2xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => handleDeleteNote(pendingDeleteNote.id)} className="rounded-2xl bg-red-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-600">Delete</button>
             </div>
           </div>
         </div>
